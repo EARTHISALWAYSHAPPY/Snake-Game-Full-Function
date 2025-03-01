@@ -5,6 +5,7 @@
 //-----free-time-----//
 #include <Arduino.h>
 #include <avr/io.h>
+#include <util/delay.h>
 #define F_CPU 16000000UL
 #define INT0_vect _VECTOR(1)
 #define INT1_vect _VECTOR(2)
@@ -16,12 +17,22 @@
 #define MOSI PB3
 #define SCK PB5
 
+bool task = 1;
+
 char ctrl;
 #define limit 63
 int x[limit] = {6, 7}, y[limit] = {7, 7}; // default row7 : 11110000
 
 int horizontal = -1, vertical = 0; // default shift right -->
 uint8_t pos_x_score = 0, pos_y_score = 0, snake = 2;
+
+const uint8_t gameover_graphic[6][8] = {
+    {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x3C, 0x24, 0x24, 0x3C, 0x00, 0x00},
+    {0x00, 0x7E, 0x42, 0x5A, 0x5A, 0x42, 0x7E, 0x00},
+    {0xFF, 0x81, 0xBD, 0xA5, 0xA5, 0xBD, 0x81, 0xFF},
+    {0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF},
+    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
 
 void setting_interrupt()
 {
@@ -102,23 +113,44 @@ void max7219_config()
   max7219_wr(0x0B, 0x07); // Scan limit
   max7219_wr(0x0C, 0x01); // Turn on
 }
-
+void clear()
+{
+  for (int row = 0; row <= 8; row++)
+  {
+    max7219_wr(row + 1, 0x00);
+  }
+}
 void display()
 {
-  // update body snake
-  byte matrix[8] = {0};
-  for (int i = 0; i < snake; i++)
+  if (task == 1)
   {
-    matrix[y[i]] |= (1 << x[i]);
+    // update body snake
+    byte matrix[8] = {0};
+    for (int i = 0; i < snake; i++)
+    {
+      matrix[y[i]] |= (1 << x[i]);
+    }
+
+    // put dot for score
+    // matrix[pos_y_score] |= (1 << pos_x_score);
+
+    // show overall
+    for (int row = 0; row < 8; row++)
+    {
+      max7219_wr(row + 1, matrix[row]);
+    }
   }
-
-  // put dot for score
-  // matrix[pos_y_score] |= (1 << pos_x_score);
-
-  // show overall
-  for (int row = 0; row < 8; row++)
+  if (task == 0)
   {
-    max7219_wr(row + 1, matrix[row]);
+    clear();
+    for (uint8_t graphic = 0; graphic < 6; graphic++)
+    {
+      for (uint8_t row = 0; row < 8; row++)
+      {
+        max7219_wr(row + 1, gameover_graphic[graphic][row]);
+      }
+      _delay_ms(500);
+    }
   }
 }
 
@@ -173,31 +205,44 @@ void condition_ctrl()
     break;
   }
 }
-
+bool gameover()
+{
+  for (uint8_t check = snake - 1; check > 0; check--)
+  {
+    if (x[0] == x[check] && y[0] == y[check])
+    {
+      task = 0;
+    }
+  }
+  return task;
+}
 void move()
 {
-  // update x,y data dot frame by frame
-  for (int position = snake - 1; position > 0; position--)
+  gameover();
+  if (task == 1)
   {
-    x[position] = x[position - 1];
-    y[position] = y[position - 1];
+    // update x,y data dot frame by frame
+    for (int position = snake - 1; position > 0; position--)
+    {
+      x[position] = x[position - 1];
+      y[position] = y[position - 1];
+    }
+    // shift led for update
+    x[0] += horizontal;
+    y[0] += vertical;
+    // horizontal กันหลุดจอ
+    if (x[0] < 0)
+      x[0] = 7;
+    if (x[0] > 7)
+      x[0] = 0;
+    // vertical กันหลุดจอ
+    if (y[0] < 0)
+      y[0] = 7;
+    if (y[0] > 7)
+      y[0] = 0;
+    condition_ctrl();
+    check_get();
   }
-  // shift led for update
-  x[0] += horizontal;
-  y[0] += vertical;
-  // horizontal กันหลุดจอ
-  if (x[0] < 0)
-    x[0] = 7;
-  if (x[0] > 7)
-    x[0] = 0;
-  // vertical กันหลุดจอ
-  if (y[0] < 0)
-    y[0] = 7;
-  if (y[0] > 7)
-    y[0] = 0;
-  condition_ctrl();
-  check_get();
-  display();
 }
 
 // ISR(INT0_vect)
@@ -226,7 +271,7 @@ ISR(TIMER0_OVF_vect)
   {
     matrix[y[i]] |= (1 << x[i]);
   }
-  matrix[pos_y_score] ^= (1 << pos_x_score);
+  matrix[pos_y_score] |= (1 << pos_x_score);
   for (int row = 0; row < 8; row++)
   {
     max7219_wr(row + 1, matrix[row]);
@@ -237,14 +282,8 @@ ISR(TIMER0_OVF_vect)
 ISR(TIMER1_OVF_vect)
 {
   move();
+  display();
   TCNT1 = 62000;
-}
-void clear()
-{
-  for (int row = 0; row <= 8; row++)
-  {
-    max7219_wr(row + 1, 0x00);
-  }
 }
 int main()
 {
